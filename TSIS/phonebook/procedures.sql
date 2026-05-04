@@ -1,73 +1,47 @@
-CREATE OR REPLACE PROCEDURE insert_or_update_user(
-    p_name VARCHAR(100),
-    p_phone VARCHAR(20)
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    IF EXISTS (
-        SELECT 1 FROM phonebook WHERE name = p_name
-    ) THEN
-        UPDATE phonebook
-        SET phone = p_phone
-        WHERE name = p_name;
-    ELSE
-        INSERT INTO phonebook(name, phone)
-        VALUES (p_name, p_phone);
-    END IF;
-END;
-$$;
-
-
-CREATE OR REPLACE PROCEDURE insert_many_users(
-    p_names TEXT[],
-    p_phones TEXT[]
+CREATE OR REPLACE PROCEDURE add_phone(
+    p_contact_name VARCHAR,
+    p_phone VARCHAR,
+    p_type VARCHAR
 )
 LANGUAGE plpgsql
 AS $$
 DECLARE
-    i INT;
-    invalid_data TEXT := '';
+    v_contact_id INT;
 BEGIN
-    IF array_length(p_names, 1) IS NULL OR array_length(p_phones, 1) IS NULL THEN
-        RAISE NOTICE 'Empty arrays';
+    SELECT id INTO v_contact_id
+    FROM contacts
+    WHERE name = p_contact_name;
+
+    IF v_contact_id IS NULL THEN
+        RAISE NOTICE 'Contact not found';
         RETURN;
     END IF;
 
-    IF array_length(p_names, 1) <> array_length(p_phones, 1) THEN
-        RAISE NOTICE 'Names and phones arrays must have the same length';
-        RETURN;
-    END IF;
-
-    FOR i IN 1..array_length(p_names, 1) LOOP
-        IF p_phones[i] ~ '^[0-9]{11}$' THEN
-            IF EXISTS (SELECT 1 FROM phonebook WHERE name = p_names[i]) THEN
-                UPDATE phonebook
-                SET phone = p_phones[i]
-                WHERE name = p_names[i];
-            ELSE
-                INSERT INTO phonebook(name, phone)
-                VALUES (p_names[i], p_phones[i]);
-            END IF;
-        ELSE
-            invalid_data := invalid_data || '(' || p_names[i] || ', ' || p_phones[i] || ') ';
-        END IF;
-    END LOOP;
-
-    IF invalid_data <> '' THEN
-        RAISE NOTICE 'Incorrect data: %', invalid_data;
-    ELSE
-        RAISE NOTICE 'All users inserted successfully';
-    END IF;
+    INSERT INTO phones(contact_id, phone, type)
+    VALUES (v_contact_id, p_phone, p_type);
 END;
 $$;
 
 
-CREATE OR REPLACE PROCEDURE delete_user(value TEXT)
+CREATE OR REPLACE PROCEDURE move_to_group(
+    p_contact_name VARCHAR,
+    p_group_name VARCHAR
+)
 LANGUAGE plpgsql
 AS $$
+DECLARE
+    v_group_id INT;
 BEGIN
-    DELETE FROM phonebook
-    WHERE name = value OR phone = value;
+    INSERT INTO groups(name)
+    VALUES (p_group_name)
+    ON CONFLICT (name) DO NOTHING;
+
+    SELECT id INTO v_group_id
+    FROM groups
+    WHERE name = p_group_name;
+
+    UPDATE contacts
+    SET group_id = v_group_id
+    WHERE name = p_contact_name;
 END;
 $$;

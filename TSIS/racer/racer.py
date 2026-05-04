@@ -1,185 +1,403 @@
-import pygame, sys
-from pygame.locals import *
-import random, time
+import pygame
+import random
+import time
+from persistence import load_settings
 
-pygame.init()
-
+WIDTH = 400
+HEIGHT = 600
 FPS = 60
-FramePerSec = pygame.time.Clock()
 
-BLUE = (0, 0, 255)
-RED = (255, 0, 0)
-GREEN = (0, 255, 0)
-BLACK = (0, 0, 0)
-WHITE = (255, 255, 255)
-YELLOW = (255, 215, 0)
-ORANGE = (255, 140, 0)
-PURPLE = (200, 32, 240)
+FINISH_DISTANCE = 1000
 
-SCREEN_WIDTH = 400
-SCREEN_HEIGHT = 600
+DIFF_MULT = {"easy": 1.6, "normal": 1.0, "hard": 0.55}
 
-SPEED = 5
-SCORE = 0
-COINS_COLLECTED = 0
+CAR_TINTS = {
+    "Default": None,
+    "Red": (255, 60, 60),
+    "Blue": (60, 120, 255),
+    "Green": (60, 220, 60),
+}
 
-# after every N coins enemy speed increases
-N = 5
-last_speed_bonus = 0
-
-font = pygame.font.SysFont("Verdana", 60)
-font_small = pygame.font.SysFont("Verdana", 20)
-game_over = font.render("Game Over", True, BLACK)
-
-background = pygame.image.load("AnimatedStreet.png")
-
-DISPLAYSURF = pygame.display.set_mode((400, 600))
-DISPLAYSURF.fill(WHITE)
-pygame.display.set_caption("Game")
-
-
-class Enemy(pygame.sprite.Sprite):
-    def __init__(self):
-        super().__init__()
-        self.image = pygame.image.load("Enemy.png")
-        self.rect = self.image.get_rect()
-        self.rect.center = (random.randint(40, SCREEN_WIDTH - 40), 0)
-
-    def move(self):
-        global SCORE
-        self.rect.move_ip(0, SPEED)
-
-        if self.rect.top > SCREEN_HEIGHT:
-            SCORE += 1
-            self.rect.top = 0
-            self.rect.center = (random.randint(40, SCREEN_WIDTH - 40), 0)
+POWERUP_COLORS = {
+    "nitro": (255, 160, 0),
+    "shield": (80, 80, 255),
+    "repair": (0, 200, 80)
+}
 
 
 class Player(pygame.sprite.Sprite):
-    def __init__(self):
+    def __init__(self, image, tint=None):
         super().__init__()
-        self.image = pygame.image.load("Player.png")
+        self.image = image.copy()
+
+        if tint:
+            tint_surf = pygame.Surface(self.image.get_size(), pygame.SRCALPHA)
+            tint_surf.fill((*tint, 120))
+
+            self.image.blit(tint_surf, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+
         self.rect = self.image.get_rect()
-        self.rect.center = (160, 520)
+        self.rect.centerx = WIDTH // 2
+        self.rect.bottom = HEIGHT
+        self.speed = 5
+        self.shield = False
 
     def move(self):
-        pressed_keys = pygame.key.get_pressed()
+        keys = pygame.key.get_pressed()
 
-        if self.rect.left > 0 and pressed_keys[K_a]:
-            self.rect.move_ip(-5, 0)
+        if keys[pygame.K_d]:
+            self.rect.move_ip(self.speed, 0)
 
-        if self.rect.right < SCREEN_WIDTH and pressed_keys[K_d]:
-            self.rect.move_ip(5, 0)
+        if keys[pygame.K_a]:
+            self.rect.move_ip(-self.speed, 0)
+
+        if self.rect.left < 0:
+            self.rect.left = 0
+
+        if self.rect.right > WIDTH:
+            self.rect.right = WIDTH
+
+
+class Enemy(pygame.sprite.Sprite):
+    def __init__(self, image):
+        super().__init__()
+        self.image = image
+        self.rect = self.image.get_rect()
+        self.speed = 10
+        self.generate_random_rect()
+
+    def generate_random_rect(self):
+        self.rect.left = random.randint(0, WIDTH - self.rect.w)
+        self.rect.bottom = 0
+
+    def move(self):
+        self.rect.move_ip(0, self.speed)
+
+        if self.rect.top > HEIGHT:
+            self.generate_random_rect()
 
 
 class Coin(pygame.sprite.Sprite):
-    def __init__(self):
+    def __init__(self, image):
         super().__init__()
+        self.base_image = image
+        self.speed = 4
+        self.size = random.randint(1, 3)
+        self._apply_size()
+        self.generate_random_rect()
 
-        # different coin weights
-        self.coin_types = [
-            {"value": 1, "color": YELLOW, "radius": 12},
-            {"value": 2, "color": ORANGE, "radius": 11},
-            {"value": 3, "color": PURPLE, "radius": 10},
-        ]
-
-        self.value = 1
-        self.image = None
-        self.rect = None
-        self.reset_position()
-
-    def choose_random_coin(self):
-        coin_type = random.choice(self.coin_types)
-        self.value = coin_type["value"]
-
-        size = coin_type["radius"] * 2
-        self.image = pygame.Surface((size, size), pygame.SRCALPHA)
-        pygame.draw.circle(
-            self.image,
-            coin_type["color"],
-            (coin_type["radius"], coin_type["radius"]),
-            coin_type["radius"]
-        )
-
+    def _apply_size(self):
+        w = int(30 * self.size * 0.5)
+        self.image = pygame.transform.scale(self.base_image, (w, w))
         self.rect = self.image.get_rect()
 
-    def reset_position(self):
-        self.choose_random_coin()
-        self.rect.center = (
-            random.randint(40, SCREEN_WIDTH - 40),
-            random.randint(-600, -50)
-        )
+    def generate_random_rect(self):
+        self.size = random.randint(1, 3)
+        self._apply_size()
+        self.rect.left = random.randint(0, WIDTH - self.rect.w)
+        self.rect.top = random.randint(-300, -50)
 
     def move(self):
-        self.rect.move_ip(0, SPEED)
+        self.rect.move_ip(0, self.speed)
 
-        if self.rect.top > SCREEN_HEIGHT:
-            self.reset_position()
-
-
-P1 = Player()
-E1 = Enemy()
-C1 = Coin()
-
-enemies = pygame.sprite.Group()
-enemies.add(E1)
-
-coins = pygame.sprite.Group()
-coins.add(C1)
-
-all_sprites = pygame.sprite.Group()
-all_sprites.add(P1)
-all_sprites.add(E1)
-all_sprites.add(C1)
+        if self.rect.top > HEIGHT:
+            self.generate_random_rect()
 
 
-while True:
-    for event in pygame.event.get():
-        if event.type == QUIT:
-            pygame.quit()
-            sys.exit()
+class Obstacle(pygame.sprite.Sprite):
+    KINDS = ["oil", "barrier"]
 
-    DISPLAYSURF.blit(background, (0, 0))
+    def __init__(self):
+        super().__init__()
+        self.kind = random.choice(self.KINDS)
+        self.speed = 4
 
-    scores = font_small.render("Score: " + str(SCORE), True, BLACK)
-    DISPLAYSURF.blit(scores, (10, 10))
+        w, h = (50, 20) if self.kind == "oil" else (40, 30)
+        self.image = pygame.Surface((w, h), pygame.SRCALPHA)
 
-    coin_text = font_small.render("Coins: " + str(COINS_COLLECTED), True, BLACK)
-    DISPLAYSURF.blit(coin_text, (240, 10))
+        if self.kind == "oil":
+            pygame.draw.ellipse(self.image, (20, 20, 80, 200), (0, 0, w, h))
+        else:
+            pygame.draw.rect(self.image, (180, 30, 30), (0, 0, w, h))
+            pygame.draw.rect(self.image, (255, 255, 255), (0, 0, w, h), 2)
 
-    speed_text = font_small.render("Speed: " + str(round(SPEED, 1)), True, BLACK)
-    DISPLAYSURF.blit(speed_text, (10, 35))
+        self.rect = self.image.get_rect()
+        self._spawn()
 
-    for entity in all_sprites:
-        DISPLAYSURF.blit(entity.image, entity.rect)
-        entity.move()
+    def _spawn(self):
+        self.rect.left = random.randint(0, WIDTH - self.rect.w)
+        self.rect.bottom = 0
 
-    collected_coin = pygame.sprite.spritecollideany(P1, coins)
+    def move(self):
+        self.rect.move_ip(0, self.speed)
 
-    if collected_coin:
-        COINS_COLLECTED += collected_coin.value
-        collected_coin.reset_position()
+        if self.rect.top > HEIGHT:
+            self._spawn()
 
-        # increase enemy speed when player earns N coins
-        if COINS_COLLECTED // N > last_speed_bonus:
-            last_speed_bonus = COINS_COLLECTED // N
-            SPEED += 1
 
-    if pygame.sprite.spritecollideany(P1, enemies):
-        pygame.mixer.Sound("crash.mp3").play()
-        time.sleep(0.5)
+class NitroStrip(pygame.sprite.Sprite):
+    def __init__(self):
+        super().__init__()
+        self.image = pygame.Surface((WIDTH, 14), pygame.SRCALPHA)
+        self.image.fill((255, 220, 0, 160))
+        self.rect = self.image.get_rect()
+        self.rect.bottom = 0
+        self.speed = 5
 
-        DISPLAYSURF.fill(RED)
-        DISPLAYSURF.blit(game_over, (30, 250))
+    def move(self):
+        self.rect.move_ip(0, self.speed)
 
-        pygame.display.update()
 
-        for entity in all_sprites:
-            entity.kill()
+class PowerUp(pygame.sprite.Sprite):
+    TIMEOUT = 7000
 
-        time.sleep(2)
-        pygame.quit()
-        sys.exit()
+    def __init__(self, kind):
+        super().__init__()
+        self.kind = kind
+        self.speed = 4
 
-    pygame.display.update()
-    FramePerSec.tick(FPS)
+        self.image = pygame.Surface((28, 28), pygame.SRCALPHA)
+        pygame.draw.circle(self.image, POWERUP_COLORS[kind], (14, 14), 14)
+
+        label = pygame.font.SysFont("Verdana", 11).render(kind[0].upper(), True, (0, 0, 0))
+        self.image.blit(label, label.get_rect(center=(14, 14)))
+
+        self.rect = self.image.get_rect()
+        self.rect.left = random.randint(0, WIDTH - self.rect.w)
+        self.rect.bottom = 0
+
+        self.spawned_at = pygame.time.get_ticks()
+
+    def move(self):
+        self.rect.move_ip(0, self.speed)
+
+    def expired(self):
+        return pygame.time.get_ticks() - self.spawned_at > self.TIMEOUT or self.rect.top > HEIGHT
+
+
+def draw_hud(screen, fontt, score, coins, distance, remaining_distance, active_pu, pu_end):
+    screen.blit(fontt.render(f"Score: {score}  Coins: {coins}", True, "black"), (5, 5))
+    screen.blit(fontt.render(f"Dist: {int(distance)}m  Left: {remaining_distance}m", True, "black"), (5, 28))
+
+    if active_pu:
+        if active_pu == "shield":
+            label = "SHIELD active"
+        else:
+            remaining = max(0, (pu_end - pygame.time.get_ticks()) // 1000)
+            label = f"{active_pu.upper()} {remaining}s"
+
+        screen.blit(fontt.render(label, True, POWERUP_COLORS[active_pu]), (5, 51))
+
+
+def play_game(screen, username):
+    settings = load_settings()
+    diff_mult = DIFF_MULT.get(settings.get("difficulty", "normal"), 1.0)
+    tint = CAR_TINTS.get(settings.get("car_color", "Default"))
+
+    image_background = pygame.image.load("assets/road.png").convert()
+    image_player = pygame.image.load("assets/Player.png").convert_alpha()
+    image_enemy = pygame.image.load("assets/Enemy.png").convert_alpha()
+    coin_image = pygame.image.load("assets/coin.png").convert_alpha()
+
+    if settings.get("sound", True):
+        pygame.mixer.music.load("assets/background.wav")
+        pygame.mixer.music.play(-1)
+    else:
+        pygame.mixer.music.stop()
+
+    sound_crash = pygame.mixer.Sound("assets/crash.wav")
+
+    fontt = pygame.font.SysFont("Verdana", 18)
+
+    player = Player(image_player, tint)
+    enemy = Enemy(image_enemy)
+    coin = Coin(coin_image)
+
+    enemy_sprites = pygame.sprite.Group(enemy)
+    coin_sprites = pygame.sprite.Group(coin)
+    obstacle_sprites = pygame.sprite.Group()
+    powerup_sprites = pygame.sprite.Group()
+    nitro_sprites = pygame.sprite.Group()
+
+    clock = pygame.time.Clock()
+
+    coins = 0
+    distance = 0.0
+    score = 0
+
+    last_speedup = 0
+    N = 5
+
+    last_obstacle = pygame.time.get_ticks()
+    last_powerup = pygame.time.get_ticks()
+    last_nitro = pygame.time.get_ticks()
+
+    OBSTACLE_INTERVAL = int(3000 * diff_mult)
+    POWERUP_INTERVAL = int(8000 * diff_mult)
+    NITRO_INTERVAL = int(12000 * diff_mult)
+
+    active_pu = None
+    pu_end = 0
+
+    base_speed = player.speed
+    oil_slow = False
+    oil_slow_end = 0
+
+    bg_y = 0
+    running = True
+
+    while running:
+        now = pygame.time.get_ticks()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                raise SystemExit
+
+        if now - last_obstacle > OBSTACLE_INTERVAL:
+            obs = Obstacle()
+
+            attempts = 0
+            while abs(obs.rect.centerx - player.rect.centerx) < 40 and attempts < 10:
+                obs._spawn()
+                attempts += 1
+
+            obstacle_sprites.add(obs)
+            last_obstacle = now
+            OBSTACLE_INTERVAL = max(800, OBSTACLE_INTERVAL - 40)
+
+        if now - last_powerup > POWERUP_INTERVAL and len(powerup_sprites) == 0:
+            kind = random.choice(["nitro", "shield", "repair"])
+            pu = PowerUp(kind)
+            powerup_sprites.add(pu)
+            last_powerup = now
+
+        if now - last_nitro > NITRO_INTERVAL:
+            ns = NitroStrip()
+            nitro_sprites.add(ns)
+            last_nitro = now
+
+        for pu in list(powerup_sprites):
+            if pu.expired():
+                pu.kill()
+
+        if active_pu == "nitro" and now > pu_end:
+            player.speed = base_speed
+            active_pu = None
+
+        if oil_slow and now > oil_slow_end:
+            player.speed = base_speed if active_pu != "nitro" else base_speed + 4
+            oil_slow = False
+
+        player.move()
+        enemy.move()
+        coin.move()
+
+        for obs in obstacle_sprites:
+            obs.move()
+
+        for pu in powerup_sprites:
+            pu.move()
+
+        for ns in list(nitro_sprites):
+            ns.move()
+            if ns.rect.top > HEIGHT:
+                ns.kill()
+
+        if pygame.sprite.spritecollideany(player, coin_sprites):
+            coins += coin.size
+
+            if coins // N > last_speedup:
+                enemy.speed += 3
+                last_speedup = coins // N
+
+            coin.generate_random_rect()
+
+        hit_obs = pygame.sprite.spritecollideany(player, obstacle_sprites)
+
+        if hit_obs:
+            if hit_obs.kind == "barrier":
+                if player.shield:
+                    player.shield = False
+                    active_pu = None
+                    hit_obs.kill()
+                else:
+                    running = False
+
+            elif hit_obs.kind == "oil":
+                if not oil_slow:
+                    oil_slow = True
+                    oil_slow_end = now + 2000
+                    player.speed = max(2, player.speed - 2)
+
+                hit_obs.kill()
+
+        if pygame.sprite.spritecollideany(player, enemy_sprites):
+            if player.shield:
+                player.shield = False
+                active_pu = None
+                enemy.generate_random_rect()
+            else:
+                running = False
+
+        hit_pu = pygame.sprite.spritecollideany(player, powerup_sprites)
+
+        if hit_pu:
+            if hit_pu.kind == "nitro":
+                active_pu = "nitro"
+                pu_end = now + 4000
+                player.speed = base_speed + 4
+
+            elif hit_pu.kind == "shield":
+                active_pu = "shield"
+                player.shield = True
+
+            elif hit_pu.kind == "repair":
+                for obs in list(obstacle_sprites)[:1]:
+                    obs.kill()
+
+            hit_pu.kill()
+
+        if pygame.sprite.spritecollideany(player, nitro_sprites):
+            if active_pu != "nitro":
+                player.speed = base_speed + 3
+                pygame.time.set_timer(pygame.USEREVENT + 1, 1500, 1)
+
+        for e in pygame.event.get(pygame.USEREVENT + 1):
+            if active_pu != "nitro":
+                player.speed = base_speed
+
+        distance += player.speed * 0.05
+        remaining_distance = max(0, FINISH_DISTANCE - int(distance))
+        score = coins * 10 + int(distance)
+
+        bg_y = (bg_y + 5) % HEIGHT
+        screen.blit(image_background, (0, bg_y - HEIGHT))
+        screen.blit(image_background, (0, bg_y))
+
+        for ns in nitro_sprites:
+            screen.blit(ns.image, ns.rect)
+
+        for obs in obstacle_sprites:
+            screen.blit(obs.image, obs.rect)
+
+        for pu in powerup_sprites:
+            screen.blit(pu.image, pu.rect)
+
+        screen.blit(coin.image, coin.rect)
+        screen.blit(enemy.image, enemy.rect)
+        screen.blit(player.image, player.rect)
+
+        draw_hud(screen, fontt, score, coins, distance, remaining_distance, active_pu, pu_end)
+
+        pygame.display.flip()
+        clock.tick(FPS)
+
+        if not running:
+            if settings.get("sound", True):
+                sound_crash.play()
+
+            pygame.mixer.music.stop()
+            time.sleep(0.5)
+
+    return score, distance
